@@ -9,11 +9,12 @@ from starlette.requests import Request
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 from authlib.integrations.starlette_client import OAuth,OAuthError
-import os
+# import os
+import requests
 
 
 # importation des api-key et secret
-from config import CLIENT_ID,CLIENT_SECRET,PORT,FACEBOOK_CLIENT_ID,FACEBOOK_CLIENT_SECRET
+from config import GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,PORT,FACEBOOK_CLIENT_ID,FACEBOOK_CLIENT_SECRET, BACKEND_URL
 
 # lancement
 app = fastapi.FastAPI()
@@ -24,25 +25,15 @@ templates = Jinja2Templates(directory="templates")
 #gerer la protection et les secrets de session
 app.add_middleware(
     SessionMiddleware,
-    secret_key=CLIENT_SECRET,
+    secret_key=GOOGLE_CLIENT_SECRET,
     session_cookie="your_session_cookie_name",  # Nom du cookie de session
     max_age=3600,  # Temps de vie des sessions en secondes
     same_site="lax",  # Ou "strict" ou "none" selon vos besoins
     https_only=False  # Mettez à True en production avec HTTPS
 )
 
-#permet de d'initialiser l'authentification ici avec google
+# point de depart de l'authentification
 oauth = OAuth()
-oauth.register(
-    name="google",
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    client_kwargs={
-        'scope': 'email openid profile',
-        'redirect_url': "http://127.0.0.1:5000/auth/google"
-    }
-)
 
 # Ajout de l'authentification avec Facebook
 oauth.register(
@@ -54,8 +45,21 @@ oauth.register(
     access_token_url="https://graph.facebook.com/oauth/access_token",
     access_token_params=None,
     client_kwargs={'scope': 'email'},
-    redirect_uri="http://127.0.0.1:5000/auth/facebook"
+    redirect_uri=f"{BACKEND_URL}/auth/facebook"
 )
+
+#permet de d'initialiser l'authentification ici avec google
+oauth.register(
+    name="google",
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    client_kwargs={
+        'scope': 'email openid profile',
+        'redirect_url': f"http://127.0.0.1:{PORT}/auth/google"
+    }
+)
+
 
 # endpoint de depart et ici affiche une page html d'accueil
 @app.get("/")
@@ -71,8 +75,8 @@ async def login(request : Request):
 #endpoint sur lequel on lance l'authentification Facebook
 @app.get("/login/facebook")
 async def login(request : Request):
-    redirect_uri = request.url_for('authDefFacebook')
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    redirect_uri_facebook = request.url_for('authDefFacebook')
+    return await oauth.facebook.authorize_redirect(request, redirect_uri_facebook)
 
 
 #endpoint qui gere la connexion avec google malgré qu'on ne la voit pas reellement
@@ -95,8 +99,22 @@ async def authDefFacebook(request: Request):
     except OAuthError as e:
         print(f"OAuthError: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not valide credentials")
-    
-    user_info = token.get('userinfo')
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error: {str(e)}")
+    access_token = token['access_token']
+
+        # Faire une requête à l'API Graph de Facebook pour obtenir des informations utilisateur
+    user_info_url = 'https://graph.facebook.com/me'
+    user_info_params = {
+            'access_token': access_token,
+            'fields': 'id,name,email,picture'
+        }
+
+    user_info_response = requests.get(user_info_url, params=user_info_params)
+    user_info_response.raise_for_status()  # Lever une exception si la requête échoue
+
+    user_info = user_info_response.json()  # Décoder la réponse JSON
     return {'data': user_info}
     
 
